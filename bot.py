@@ -1,7 +1,5 @@
 import logging
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response
-from telegram import Update
+import asyncio
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -10,7 +8,7 @@ from telegram.ext import (
     filters
 )
 
-from config import BOT_TOKEN, WEBHOOK_URL
+from config import BOT_TOKEN
 from database import init_db
 from handlers.start import start_command, help_command, cancel_command
 from handlers.conversion import prompt_conversion, handle_document_conversion, handle_text_message
@@ -29,65 +27,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Application
-telegram_app = Application.builder().token(BOT_TOKEN).build()
-
-# Register Handlers
-telegram_app.add_handler(CommandHandler("start", start_command))
-telegram_app.add_handler(CommandHandler("help", help_command))
-telegram_app.add_handler(CommandHandler("cancel", cancel_command))
-telegram_app.add_handler(CommandHandler("stats", user_stats_command))
-
-telegram_app.add_handler(CommandHandler("admin", admin_command))
-telegram_app.add_handler(CommandHandler("users", admin_users_command))
-telegram_app.add_handler(CommandHandler("botstats", admin_botstats_command))
-telegram_app.add_handler(CommandHandler("broadcast", admin_broadcast_command))
-
-# Callbacks
-telegram_app.add_handler(CallbackQueryHandler(start_command, pattern="^nav_main$"))
-telegram_app.add_handler(CallbackQueryHandler(help_command, pattern="^nav_help$"))
-telegram_app.add_handler(CallbackQueryHandler(prompt_images_to_pdf, pattern="^conv_img_pdf$"))
-telegram_app.add_handler(CallbackQueryHandler(process_images_to_pdf, pattern="^process_img_pdf$"))
-telegram_app.add_handler(CallbackQueryHandler(
-    lambda u, c: prompt_conversion(u, c, u.callback_query.data),
-    pattern="^conv_(pdf_word|pdf_img|pdf_txt|word_pdf|txt_pdf)$"
-))
-
-# Messages
-telegram_app.add_handler(MessageHandler(filters.PHOTO | (filters.Document.IMAGE), collect_image))
-telegram_app.add_handler(MessageHandler(filters.Document.ALL, handle_document_conversion))
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def main():
+    # Initialize SQLite Database
     init_db()
-    await telegram_app.initialize()
-    await telegram_app.start()
 
-    if WEBHOOK_URL:
-        full_webhook_url = f"{WEBHOOK_URL}/webhook"
-        logger.info(f"Setting webhook to: {full_webhook_url}")
-        await telegram_app.bot.set_webhook(url=full_webhook_url)
+    # Build Telegram Application
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    yield
+    # Command Handlers
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("cancel", cancel_command))
+    application.add_handler(CommandHandler("stats", user_stats_command))
 
-    logger.info("Stopping Telegram Application...")
-    await telegram_app.stop()
-    await telegram_app.shutdown()
+    # Admin Command Handlers
+    application.add_handler(CommandHandler("admin", admin_command))
+    application.add_handler(CommandHandler("users", admin_users_command))
+    application.add_handler(CommandHandler("botstats", admin_botstats_command))
+    application.add_handler(CommandHandler("broadcast", admin_broadcast_command))
 
+    # Callback Handlers
+    application.add_handler(CallbackQueryHandler(start_command, pattern="^nav_main$"))
+    application.add_handler(CallbackQueryHandler(help_command, pattern="^nav_help$"))
+    application.add_handler(CallbackQueryHandler(prompt_images_to_pdf, pattern="^conv_img_pdf$"))
+    application.add_handler(CallbackQueryHandler(process_images_to_pdf, pattern="^process_img_pdf$"))
+    application.add_handler(CallbackQueryHandler(
+        lambda u, c: prompt_conversion(u, c, u.callback_query.data),
+        pattern="^conv_(pdf_word|pdf_img|pdf_txt|word_pdf|txt_pdf)$"
+    ))
 
-app = FastAPI(lifespan=lifespan)
+    # Message Handlers
+    application.add_handler(MessageHandler(filters.PHOTO | (filters.Document.IMAGE), collect_image))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document_conversion))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
+    # Start Long Polling
+    logger.info("Starting bot in long-polling mode...")
+    application.run_polling(drop_pending_updates=True)
 
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
-
-
-@app.post("/webhook")
-async def process_webhook(request: Request):
-    data = await request.json()
-    update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
-    return Response(status_code=200)
+if __name__ == "__main__":
+    main()
