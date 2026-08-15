@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: kingbird-pdf-bot
+    env: docker
+    plan: free
+    region: singapore
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: PORT
+        value: 10000
+      - key: MAX_FILE_SIZE_MB
+        value: 20
